@@ -45,6 +45,12 @@ MOTION_REF_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Captures CIRC commands with two pose blocks: CIRC {...}, {...}
+CIRC_RE = re.compile(
+    r"^\s*CIRC\s+(?P<aux>\{[^}]*\})\s*,\s*(?P<end>\{[^}]*\})",
+    re.IGNORECASE,
+)
+
 
 def parse_pose_block(block: str):
     """Return dict with X,Y,Z,A,B,C if present in the block."""
@@ -68,6 +74,7 @@ def parse_kuka_file(text: str):
     - named poses like P1={X...,Y...,Z...,A...,B...,C...}
     - motion lines containing inline { ... }
     - motion lines referencing named pose (LIN P1 / PTP P1)
+    - CIRC commands with two pose blocks (auxiliary and end points)
     Returns list of pose dicts in encountered motion order.
     """
     named = {}
@@ -90,7 +97,20 @@ def parse_kuka_file(text: str):
                 named[nm.upper()] = pose
             continue
 
-        # 2) Motion line with inline pose block
+        # 2) CIRC command with two pose blocks (auxiliary point, end point)
+        m_circ = CIRC_RE.match(line_wo_comment)
+        if m_circ:
+            aux_block = m_circ.group("aux")
+            end_block = m_circ.group("end")
+            aux_pose = parse_pose_block(aux_block)
+            end_pose = parse_pose_block(end_block)
+            if aux_pose and end_pose:
+                # Add both auxiliary and end points as keyframes
+                motion_poses.append(aux_pose)
+                motion_poses.append(end_pose)
+            continue
+
+        # 3) Motion line with inline pose block
         if re.search(r"\b(LIN|PTP)\b", line_wo_comment, re.IGNORECASE):
             blk_m = POSE_BLOCK_RE.search(line_wo_comment)
             if blk_m:
@@ -99,7 +119,7 @@ def parse_kuka_file(text: str):
                     motion_poses.append(pose)
                     continue
 
-            # 3) Motion line referencing named pose
+            # 4) Motion line referencing named pose
             m_ref = MOTION_REF_RE.match(line_wo_comment)
             if m_ref:
                 nm = m_ref.group("name").upper()

@@ -1,0 +1,43 @@
+&ACCESS RVP
+&REL 1
+&PARAM TEMPLATE = C:\KRC\Roboter\Template\vorgabe
+&PARAM EDITMASK = *
+DEF circle_movement()
+;FOLD INI
+  ;FOLD BASISTECH INI
+    GLOBAL INTERRUPT DECL 3 WHEN $STOPMESS==TRUE DO IR_STOPM ( )
+    INTERRUPT ON 3 
+    BAS (#INITMOV,0 )
+  ;ENDFOLD (BASISTECH INI)
+  ;FOLD USER INI
+    ;Make your modifications here
+  ;ENDFOLD (USER INI)
+;ENDFOLD (INI)
+
+;----------------------------------------------------------------
+; Circle Movement
+; Tool frame moves in a circular pattern
+; Circle diameter: 1000mm (radius: 500mm)
+; Center: X=1000, Y=1000, Z=300
+;----------------------------------------------------------------
+
+; Move to starting position (home)
+PTP {A1 0, A2 -90, A3 90, A4 0, A5 90, A6 0} ; Home position
+
+; Move to circle start point (right side of circle)
+LIN {X 1500, Y 1000, Z 300, A 0, B 0, C 0} C_DIS
+
+; First half circle (right to left via top)
+; Intermediate point (top of circle)
+; End point (left side of circle)
+CIRC {X 1000, Y 1500, Z 300, A 0, B 90, C 0}, {X 500, Y 1000, Z 300, A 0, B -90, C 0} C_DIS
+
+; Second half circle (left to right via bottom)
+; Intermediate point (bottom of circle)
+; End point (right side - starting position)
+CIRC {X 1000, Y 500, Z 300, A 0, B -90, C 0}, {X 1500, Y 1000, Z 300, A 0, B 90, C 0} C_DIS
+
+; Return to home position
+PTP {A1 0, A2 -90, A3 90, A4 0, A5 90, A6 0}
+
+END

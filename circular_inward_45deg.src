@@ -1,0 +1,56 @@
+&ACCESS RVP
+&REL 1
+&PARAM TEMPLATE = C:\KRC\Roboter\Template\vorgabe
+&PARAM EDITMASK = *
+DEF circular_inward_45deg()
+;FOLD INI
+  ;FOLD BASISTECH INI
+    GLOBAL INTERRUPT DECL 3 WHEN $STOPMESS==TRUE DO IR_STOPM ( )
+    INTERRUPT ON 3 
+    BAS (#INITMOV,0 )
+  ;ENDFOLD (BASISTECH INI)
+  ;FOLD USER INI
+    ;Make your modifications here
+  ;ENDFOLD (USER INI)
+;ENDFOLD (INI)
+
+;----------------------------------------------------------------
+; Circular Movement with 45-Degree Inward Tilt
+; Tool frame moves in a circular pattern while maintaining
+; a constant 45-degree angle pointing toward the circle center
+; Circle diameter: 1000mm (radius: 500mm)
+; Center: X=1000, Y=1000, Z=300
+;----------------------------------------------------------------
+
+; Move to starting position (home)
+PTP {A1 0, A2 -90, A3 90, A4 0, A5 90, A6 0} ; Home position
+
+; Move to circle start point (right side of circle)
+; C=180: Tool pointing inward (toward center from right side)
+; B=45: Tool tilted 45 degrees inward toward center
+LIN {X 1500, Y 1000, Z 300, A 0, B -45, C 180} C_DIS
+
+; First quarter circle (0° to 90° - right to top)
+; At 45°: Tool rotates to maintain inward orientation
+; At 90°: Tool pointing inward from top position
+CIRC {X 1354, Y 1354, Z 300, A 0, B -45, C 225}, {X 1000, Y 1500, Z 300, A 0, B -45, C 270} C_DIS
+
+; Second quarter circle (90° to 180° - top to left)
+; At 135°: Tool continues to point inward
+; At 180°: Tool pointing inward from left position
+CIRC {X 646, Y 1354, Z 300, A 0, B -45, C 315}, {X 500, Y 1000, Z 300, A 0, B -45, C 360} C_DIS
+
+; Third quarter circle (180° to 270° - left to bottom)
+; At 225°: Tool continues to point inward
+; At 270°: Tool pointing inward from bottom position
+CIRC {X 646, Y 646, Z 300, A 0, B -45, C 405}, {X 1000, Y 500, Z 300, A 0, B -45, C 450} C_DIS
+
+; Fourth quarter circle (270° to 360° - bottom to right)
+; At 315°: Tool continues to point inward
+; At 360°: Tool returns to starting orientation
+CIRC {X 1354, Y 646, Z 300, A 0, B -45, C 495}, {X 1500, Y 1000, Z 300, A 0, B -45, C 540} C_DIS
+
+; Return to home position
+PTP {A1 0, A2 -90, A3 90, A4 0, A5 90, A6 0}
+
+END

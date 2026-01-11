@@ -1,0 +1,45 @@
+&ACCESS RVP
+&REL 1
+&PARAM TEMPLATE = C:\KRC\Roboter\Template\vorgabe
+&PARAM EDITMASK = *
+DEF square_movement()
+;FOLD INI
+  ;FOLD BASISTECH INI
+    GLOBAL INTERRUPT DECL 3 WHEN $STOPMESS==TRUE DO IR_STOPM ( )
+    INTERRUPT ON 3 
+    BAS (#INITMOV,0 )
+  ;ENDFOLD (BASISTECH INI)
+  ;FOLD USER INI
+    ;Make your modifications here
+  ;ENDFOLD (USER INI)
+;ENDFOLD (INI)
+
+;----------------------------------------------------------------
+; 1m x 1m Square Movement
+; Tool frame moves in a square pattern
+; Dimensions: 1000mm x 1000mm
+;----------------------------------------------------------------
+
+; Move to starting position (corner 1)
+PTP {A1 0, A2 -90, A3 90, A4 0, A5 90, A6 0} ; Home position
+LIN {X 500, Y 500, Z 300, A 0, B 0, C 0} C_DIS
+
+; Corner 1 - Starting position
+LIN {X 500, Y 500, Z 300, A 0, B 0, C 0} C_DIS
+
+; Corner 2 - Move 1000mm in +X direction
+LIN {X 1500, Y 500, Z 300, A 0, B 0, C 0} C_DIS
+
+; Corner 3 - Move 1000mm in +Y direction
+LIN {X 1500, Y 1500, Z 300, A 0, B 0, C 0} C_DIS
+
+; Corner 4 - Move 1000mm in -X direction
+LIN {X 500, Y 1500, Z 300, A 0, B 0, C 0} C_DIS
+
+; Return to Corner 1 - Move 1000mm in -Y direction (complete the square)
+LIN {X 500, Y 500, Z 300, A 0, B 0, C 0} C_DIS
+
+; Return to home position
+PTP {A1 0, A2 -90, A3 90, A4 0, A5 90, A6 0}
+
+END

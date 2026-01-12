@@ -51,6 +51,12 @@ CIRC_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Captures WAIT SEC commands: WAIT SEC 1.0
+WAIT_SEC_RE = re.compile(
+    r"^\s*WAIT\s+SEC\s+(?P<seconds>[-+]?\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+
 
 def parse_pose_block(block: str):
     """Return dict with X,Y,Z,A,B,C if present in the block."""
@@ -75,10 +81,12 @@ def parse_kuka_file(text: str):
     - motion lines containing inline { ... }
     - motion lines referencing named pose (LIN P1 / PTP P1)
     - CIRC commands with two pose blocks (auxiliary and end points)
-    Returns list of pose dicts in encountered motion order.
+    - WAIT SEC commands for pauses
+    Returns list of commands (pose dicts or pause commands) in encountered order.
+    Each pause is represented as {"type": "pause", "seconds": float}.
     """
     named = {}
-    motion_poses = []
+    commands = []
 
     lines = text.splitlines()
     for line in lines:
@@ -97,7 +105,14 @@ def parse_kuka_file(text: str):
                 named[nm.upper()] = pose
             continue
 
-        # 2) CIRC command with two pose blocks (auxiliary point, end point)
+        # 2) WAIT SEC command
+        m_wait = WAIT_SEC_RE.match(line_wo_comment)
+        if m_wait:
+            seconds = float(m_wait.group("seconds"))
+            commands.append({"type": "pause", "seconds": seconds})
+            continue
+
+        # 3) CIRC command with two pose blocks (auxiliary point, end point)
         m_circ = CIRC_RE.match(line_wo_comment)
         if m_circ:
             aux_block = m_circ.group("aux")
@@ -106,28 +121,28 @@ def parse_kuka_file(text: str):
             end_pose = parse_pose_block(end_block)
             if aux_pose and end_pose:
                 # Add both auxiliary and end points as keyframes
-                motion_poses.append(aux_pose)
-                motion_poses.append(end_pose)
+                commands.append(aux_pose)
+                commands.append(end_pose)
             continue
 
-        # 3) Motion line with inline pose block
+        # 4) Motion line with inline pose block
         if re.search(r"\b(LIN|PTP)\b", line_wo_comment, re.IGNORECASE):
             blk_m = POSE_BLOCK_RE.search(line_wo_comment)
             if blk_m:
                 pose = parse_pose_block(blk_m.group(0))
                 if pose:
-                    motion_poses.append(pose)
+                    commands.append(pose)
                     continue
 
-            # 4) Motion line referencing named pose
+            # 5) Motion line referencing named pose
             m_ref = MOTION_REF_RE.match(line_wo_comment)
             if m_ref:
                 nm = m_ref.group("name").upper()
                 if nm in named:
-                    motion_poses.append(named[nm])
+                    commands.append(named[nm])
                 continue
 
-    return motion_poses
+    return commands
 
 
 # --- Blender side ---
@@ -243,9 +258,9 @@ class ANIM_OT_import_kuka_kpl(bpy.types.Operator):
             self.report({"ERROR"}, f"Failed to read file: {e}")
             return {"CANCELLED"}
 
-        poses = parse_kuka_file(text)
-        if not poses:
-            self.report({"ERROR"}, "No motion poses found. Check file format.")
+        commands = parse_kuka_file(text)
+        if not commands:
+            self.report({"ERROR"}, "No motion commands found. Check file format.")
             return {"CANCELLED"}
 
         obj = s.target
@@ -256,12 +271,38 @@ class ANIM_OT_import_kuka_kpl(bpy.types.Operator):
         mm_to_m = s.mm_scale * s.global_scale
 
         frame = s.start_frame
-        for pose in poses:
-            set_empty_pose(obj, pose, mm_to_m=mm_to_m, rot_order=s.rot_order)
-            keyframe_pose(obj, frame)
-            frame += s.frame_step
+        pose_count = 0
+        pause_count = 0
+        last_pose = None
+        
+        for cmd in commands:
+            if isinstance(cmd, dict) and cmd.get("type") == "pause":
+                # WAIT SEC command - hold current position for specified duration
+                pause_count += 1
+                seconds = cmd["seconds"]
+                # Convert seconds to frames (assuming 24 fps by default)
+                # You could make fps a configurable property if needed
+                fps = context.scene.render.fps
+                pause_frames = int(seconds * fps)
+                
+                if last_pose and pause_frames > 0:
+                    # Create a keyframe at the end of the pause with the same pose
+                    frame += pause_frames
+                    set_empty_pose(obj, last_pose, mm_to_m=mm_to_m, rot_order=s.rot_order)
+                    keyframe_pose(obj, frame)
+            else:
+                # Regular pose command
+                pose_count += 1
+                set_empty_pose(obj, cmd, mm_to_m=mm_to_m, rot_order=s.rot_order)
+                keyframe_pose(obj, frame)
+                last_pose = cmd
+                frame += s.frame_step
 
-        self.report({"INFO"}, f"Imported {len(poses)} poses to {obj.name}.")
+        msg = f"Imported {pose_count} poses"
+        if pause_count > 0:
+            msg += f" and {pause_count} pauses"
+        msg += f" to {obj.name}."
+        self.report({"INFO"}, msg)
         return {"FINISHED"}
 
 

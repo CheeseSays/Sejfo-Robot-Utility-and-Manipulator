@@ -1,0 +1,98 @@
+&ACCESS RVO
+&REL 1
+&PARAM TEMPLATE = C:\KRC\Roboter\Template\vorgabe
+&PARAM EDITMASK = *
+DEF VCProg1( )
+;FOLD INI
+  ;FOLD BASISTECH INI
+    GLOBAL INTERRUPT DECL 3 WHEN $STOPMESS==TRUE DO IR_STOPM ( )
+    INTERRUPT ON 3 
+    BAS (#INITMOV,0 )
+  ;ENDFOLD (BASISTECH INI)
+  ;FOLD USER INI
+    ;Make your modifications here
+
+  ;ENDFOLD (USER INI)
+;ENDFOLD (INI)
+
+;--- Main routine ---
+; Move to initial position P13
+PTP {A1 -123.342,A2 -94.396,A3 135.452,A4 0.0,A5 48.945,A6 -123.342}
+
+END
+
+;--- Subroutine: home ---
+DEF home( )
+; Move to home position P1
+PTP {A1 -90.0,A2 -116.455,A3 135.158,A4 0.0,A5 71.297,A6 -90.0}
+END
+
+;--- Subroutine: T1_PICK ---
+DEF T1_PICK( )
+; Set output 301 = TRUE
+$OUT[301]=TRUE
+
+; Wait for input 301 = FALSE
+WAIT FOR $IN[301]==FALSE
+
+; Joint motion to Approach position
+; BASE #32 (Process Node #43)
+PTP {A1 -67.522,A2 -73.274,A3 94.949,A4 0.0,A5 68.325,A6 22.478} C_DIS
+
+; Linear motion to Pick position
+; BASE #32 (Process Node #43)
+LIN {A1 -88.878,A2 -85.030,A3 112.105,A4 0.0,A5 62.925,A6 1.122} C_DIS
+
+; Wait 1 second
+WAIT SEC 1.0
+
+; Set output 200 = TRUE
+$OUT[200]=TRUE
+
+; Linear motion to Retract position
+; BASE #32 (Process Node #43)
+LIN {A1 -67.900,A2 -76.665,A3 93.557,A4 0.0,A5 73.109,A6 22.100} C_DIS
+
+; Call home routine
+home()
+END
+
+;--- Subroutine: T1_PLACE ---
+DEF T1_PLACE( )
+; Joint motion to Approach_1 position
+PTP {A1 -89.709,A2 -149.279,A3 153.713,A4 0.0,A5 85.565,A6 -89.709} C_DIS
+
+; Linear motion to Place position
+LIN {A1 -89.709,A2 -148.515,A3 156.814,A4 0.0,A5 81.701,A6 -89.709} C_DIS
+
+; Set output 304 = TRUE
+$OUT[304]=TRUE
+
+; Linear motion to P2
+LIN {A1 -136.666,A2 -121.336,A3 145.158,A4 0.0,A5 66.178,A6 -136.666} C_DIS
+
+; Set output 302 = TRUE
+$OUT[302]=TRUE
+
+; Linear motion to P4 (3.2 seconds cycle time)
+LIN {A1 -123.927,A2 -102.940,A3 132.774,A4 0.0,A5 60.166,A6 -123.927} C_DIS
+
+; Wait 0.5 seconds
+WAIT SEC 0.5
+
+; Set output 200 = FALSE
+$OUT[200]=FALSE
+
+; Linear motion to Retract_1 (DISABLED)
+; LIN {A1 -123.099,A2 -101.471,A3 132.990,A4 0.0,A5 58.481,A6 -123.099} C_DIS
+END
+
+;--- Subroutine: vcHelperJointMove ---
+DEF vcHelperJointMove( )
+; Empty helper routine
+END
+
+;--- Subroutine: vcHelperLinearMove ---
+DEF vcHelperLinearMove( )
+; Empty helper routine
+END

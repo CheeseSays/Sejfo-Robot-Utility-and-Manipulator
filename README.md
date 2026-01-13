@@ -6,7 +6,7 @@
 
 ### **Installation**
  Drag the .zip file into your Blender window and click OK in the widget that pops up.
- After installation you will find the importer in the Animation tab in your N-panel.
+ After installation you will find the KRL importer in the Animation tab in your N-panel.
 
 ### **Usage**
 In its current state it has support for KRL XYZABC linear and cirular statements, as well as WAIT SEC statements.

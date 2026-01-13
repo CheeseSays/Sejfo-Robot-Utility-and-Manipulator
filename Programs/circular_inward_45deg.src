@@ -35,7 +35,6 @@ LIN {X 1500, Y 1000, Z 300, A 0, B -45, C 180} C_DIS
 ; At 90°: Tool pointing inward from top position
 CIRC {X 1354, Y 1354, Z 300, A 0, B -45, C 225}, {X 1000, Y 1500, Z 300, A 0, B -45, C 270} C_DIS
 
-WAIT SEC 2.0
 
 ; Second quarter circle (90° to 180° - top to left)
 ; At 135°: Tool continues to point inward

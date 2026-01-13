@@ -4,10 +4,12 @@
 &PARAM EDITMASK = *
 DEF cube_welding ( )
 
-; Program: Cube Corner Welding Sequence
+; Program: Cube Corner Welding Sequence - External Approach Only
 ; Description: Welds all 8 corners of a 1000mm x 1000mm x 1000mm cube
-; Generated: 12/01/2026
-; Cube base corner at (1500, -500, 1000) mm
+; Robot: ABB IRB 6720 170-310 compatible (reach 3100mm)
+; Generated: 01/13/2026
+; Cube: X[1500-2500], Y[-500-500], Z[1000-2000] mm
+; Safety: Robot TCP and arm structure remain outside cube volume at all times
 
 ;FOLD Initialise and set default speed
 BAS (#INITMOV,0)
@@ -24,73 +26,108 @@ $ADVANCE = 5
 $BASE = {FRAME: X 0.000,Y 0.000,Z 0.000,A 0.000,B 0.000,C 0.000}
 
 ; Move to safe home position
-PTP {X 2000.000,Y 0.000,Z 2500.000,A 0.000,B 90.000,C 0.000}
+PTP {X 2000.000,Y 0.000,Z 2800.000,A 0.000,B 90.000,C 0.000}
 
 ; ========================================
 ; BOTTOM FACE - Weld 4 bottom corners
+; Approach from outside, below cube bottom
 ; ========================================
 
-; Move to approach position above Corner 1
-LIN {X 1500.000,Y -500.000,Z 1200.000,A 0.000,B 0.000,C -90.000}
-
-; Corner 1: Bottom-Front-Left (1500, -500, 1000)
-LIN {X 1500.000,Y -500.000,Z 1000.000,A 0.000,B 0.000,C -90.000}
+; Approach Corner 1: Bottom-Front-Left (1500, -500, 1000)
+; Move to front-left side, 400mm below cube
+LIN {X 1500.000,Y -900.000,Z 600.000,A 0.000,B 45.000,C -90.000}
+; Move closer to front face, staying below and outside
+LIN {X 1500.000,Y -700.000,Z 800.000,A 0.000,B 45.000,C -90.000}
+; Reach to corner from front-left-bottom (outside cube)
+LIN {X 1500.000,Y -650.000,Z 950.000,A 0.000,B 30.000,C -90.000}
 ; Weld corner 1
-WAIT SEC 2.5
+WAIT SEC 0.75
+; Retract along same path
+LIN {X 1500.000,Y -700.000,Z 800.000,A 0.000,B 45.000,C -90.000}
 
-; Move to Corner 2: Bottom-Front-Right (2500, -500, 1000)
-LIN {X 2500.000,Y -500.000,Z 1000.000,A 0.000,B 90.000,C 0.000}
+; Approach Corner 2: Bottom-Front-Right (2500, -500, 1000)
+; Transit to front-right side
+LIN {X 2500.000,Y -700.000,Z 800.000,A 0.000,B 45.000,C 0.000}
+; Reach to corner from front-right-bottom (outside cube)
+LIN {X 2500.000,Y -650.000,Z 950.000,A 0.000,B 30.000,C 0.000}
 ; Weld corner 2
-WAIT SEC 2.5
+WAIT SEC 0.75
+; Retract
+LIN {X 2500.000,Y -700.000,Z 800.000,A 0.000,B 45.000,C 0.000}
 
-; Move to Corner 3: Bottom-Back-Right (2500, 500, 1000)
-LIN {X 2500.000,Y 500.000,Z 1000.000,A 0.000,B 90.000,C 0.000}
+; Approach Corner 3: Bottom-Back-Right (2500, 500, 1000)
+; Transit to back-right side
+LIN {X 2500.000,Y 700.000,Z 800.000,A 0.000,B 45.000,C 90.000}
+; Reach to corner from back-right-bottom (outside cube)
+LIN {X 2500.000,Y 650.000,Z 950.000,A 0.000,B 30.000,C 90.000}
 ; Weld corner 3
-WAIT SEC 2.5
+WAIT SEC 0.75
+; Retract
+LIN {X 2500.000,Y 700.000,Z 800.000,A 0.000,B 45.000,C 90.000}
 
-; Move to Corner 4: Bottom-Back-Left (1500, 500, 1000)
-LIN {X 1500.000,Y 500.000,Z 1000.000,A 0.000,B 90.000,C 0.000}
+; Approach Corner 4: Bottom-Back-Left (1500, 500, 1000)
+; Transit to back-left side
+LIN {X 1500.000,Y 700.000,Z 800.000,A 0.000,B 45.000,C 180.000}
+; Reach to corner from back-left-bottom (outside cube)
+LIN {X 1500.000,Y 650.000,Z 950.000,A 0.000,B 30.000,C 180.000}
 ; Weld corner 4
-WAIT SEC 2.5
-
-; Return to Corner 1 to close bottom face
-LIN {X 1500.000,Y -500.000,Z 1000.000,A 0.000,B 90.000,C 0.000}
+WAIT SEC 0.75
+; Retract
+LIN {X 1500.000,Y 700.000,Z 800.000,A 0.000,B 45.000,C 180.000}
 
 ; ========================================
-; VERTICAL EDGES - Move up to top face
+; TOP FACE - Weld 4 top corners
+; Approach from outside, above cube top
 ; ========================================
 
-; Move up vertical edge 1 to Corner 5: Top-Front-Left (1500, -500, 2000)
-LIN {X 1500.000,Y -500.000,Z 2000.000,A 0.000,B 90.000,C 0.000}
+; Approach Corner 5: Top-Front-Left (1500, -500, 2000)
+; Move to front-left side, 500mm above cube
+LIN {X 1500.000,Y -700.000,Z 2500.000,A 0.000,B 135.000,C -90.000}
+; Reach down to corner from front-left-top (outside cube)
+LIN {X 1500.000,Y -650.000,Z 2050.000,A 0.000,B 150.000,C -90.000}
 ; Weld corner 5
-WAIT SEC 2.5
+WAIT SEC 0.75
+; Retract
+LIN {X 1500.000,Y -700.000,Z 2500.000,A 0.000,B 135.000,C -90.000}
 
-; Move to Corner 6: Top-Front-Right (2500, -500, 2000)
-LIN {X 2500.000,Y -500.000,Z 2000.000,A 0.000,B 90.000,C 0.000}
+; Approach Corner 6: Top-Front-Right (2500, -500, 2000)
+; Transit to front-right side
+LIN {X 2500.000,Y -700.000,Z 2500.000,A 0.000,B 135.000,C 0.000}
+; Reach down to corner from front-right-top (outside cube)
+LIN {X 2500.000,Y -650.000,Z 2050.000,A 0.000,B 150.000,C 0.000}
 ; Weld corner 6
-WAIT SEC 2.5
+WAIT SEC 0.75
+; Retract
+LIN {X 2500.000,Y -700.000,Z 2500.000,A 0.000,B 135.000,C 0.000}
 
-; Move to Corner 7: Top-Back-Right (2500, 500, 2000)
-LIN {X 2500.000,Y 500.000,Z 2000.000,A 0.000,B 90.000,C 0.000}
+; Approach Corner 7: Top-Back-Right (2500, 500, 2000)
+; Transit to back-right side
+LIN {X 2500.000,Y 700.000,Z 2500.000,A 0.000,B 135.000,C 90.000}
+; Reach down to corner from back-right-top (outside cube)
+LIN {X 2500.000,Y 650.000,Z 2050.000,A 0.000,B 150.000,C 90.000}
 ; Weld corner 7
-WAIT SEC 2.5
+WAIT SEC 0.75
+; Retract
+LIN {X 2500.000,Y 700.000,Z 2500.000,A 0.000,B 135.000,C 90.000}
 
-; Move to Corner 8: Top-Back-Left (1500, 500, 2000)
-LIN {X 1500.000,Y 500.000,Z 2000.000,A 0.000,B 90.000,C 0.000}
+; Approach Corner 8: Top-Back-Left (1500, 500, 2000)
+; Transit to back-left side
+LIN {X 1500.000,Y 700.000,Z 2500.000,A 0.000,B 135.000,C 180.000}
+; Reach down to corner from back-left-top (outside cube)
+LIN {X 1500.000,Y 650.000,Z 2050.000,A 0.000,B 150.000,C 180.000}
 ; Weld corner 8
-WAIT SEC 2.5
-
-; Return to Corner 5 to close top face
-LIN {X 1500.000,Y -500.000,Z 2000.000,A 0.000,B 90.000,C 0.000}
+WAIT SEC 0.75
+; Retract
+LIN {X 1500.000,Y 700.000,Z 2500.000,A 0.000,B 135.000,C 180.000}
 
 ; ========================================
 ; FINISH - Return to safe position
 ; ========================================
 
-; Retract to safe height
-LIN {X 2000.000,Y 0.000,Z 2500.000,A 0.000,B 90.000,C 0.000}
+; Move to safe position above cube
+LIN {X 2000.000,Y 0.000,Z 2800.000,A 0.000,B 90.000,C 0.000}
 
 ; Move to home position
-PTP {X 2000.000,Y 0.000,Z 2500.000,A 0.000,B 90.000,C 0.000}
+PTP {X 2000.000,Y 0.000,Z 2800.000,A 0.000,B 90.000,C 0.000}
 
 END

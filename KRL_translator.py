@@ -87,7 +87,10 @@ def parse_program(text: str) -> list:
 def ensure_empty(obj):
     return obj and obj.type == 'EMPTY'
 
-def set_empty_pose(obj, pose, mm_to_m: float, rot_order: str):
+def set_empty_pose(obj, pose, mm_to_m: float, rot_order: str, robot_base=None):
+    """Set pose on the target empty, optionally relative to robot_base."""
+    import mathutils
+    
     x = pose['X'] * mm_to_m
     y = pose['Y'] * mm_to_m
     z = pose['Z'] * mm_to_m
@@ -96,9 +99,32 @@ def set_empty_pose(obj, pose, mm_to_m: float, rot_order: str):
     b = math.radians(pose.get('B', 0))
     c = math.radians(pose.get('C', 0))
 
-    obj.location = (x, y, z)
-    obj.rotation_mode = rot_order
-    obj.rotation_euler = (a, b, c)
+    # Create local transformation
+    local_location = mathutils.Vector((x, y, z))
+    local_rotation = mathutils.Euler((a, b, c), rot_order)
+    
+    if robot_base:
+        # Transform from robot base local space to world space
+        base_matrix = robot_base.matrix_world
+        
+        # Create transformation matrix from local pose
+        local_matrix = mathutils.Matrix.LocRotScale(
+            local_location,
+            local_rotation,
+            None
+        )
+        
+        # Apply robot base transformation to get world position
+        world_matrix = base_matrix @ local_matrix
+        
+        obj.location = world_matrix.to_translation()
+        obj.rotation_mode = rot_order
+        obj.rotation_euler = world_matrix.to_euler(rot_order)
+    else:
+        # No robot base, use world coordinates directly
+        obj.location = local_location
+        obj.rotation_mode = rot_order
+        obj.rotation_euler = local_rotation
 
 def keyframe_pose(obj, frame: int):
     obj.keyframe_insert(data_path="location", frame=frame)
@@ -107,7 +133,7 @@ def keyframe_pose(obj, frame: int):
 class KRLImporterSettings(PropertyGroup):
     filepath: StringProperty(
         name="File Path",
-        description="Path to the KRL program file",
+        description="Path to the KRL program file. Currently only supports XYZABC statements.",
         default="",
         subtype='FILE_PATH'
     ) # type: ignore
@@ -116,6 +142,12 @@ class KRLImporterSettings(PropertyGroup):
         name="Target Empty",
         type=bpy.types.Object,
         description="Empty that will receive keyframes (TCP stand-in)",
+    ) # type: ignore
+
+    robot_base: PointerProperty(
+        name="Robot Base (optional)",
+        type=bpy.types.Object,
+        description="Robot base object",
     ) # type: ignore
 
     mm_to_m: FloatProperty(
@@ -200,6 +232,7 @@ class ANIM_OT_import_krl(Operator):
             obj.animation_data.action = bpy.data.actions.new(name=action_name)
 
         mm_to_m = settings.mm_to_m * settings.global_scale
+        robot_base = settings.robot_base
 
         frame = settings.start_frame
         pose_count = 0
@@ -215,11 +248,11 @@ class ANIM_OT_import_krl(Operator):
 
                 if last_pose and pause_frames > 0:
                     frame += pause_frames
-                    set_empty_pose(obj, last_pose, mm_to_m, settings.rot_order)
+                    set_empty_pose(obj, last_pose, mm_to_m, settings.rot_order, robot_base)
                     keyframe_pose(obj, frame)
             else:
                 pose_count += 1
-                set_empty_pose(obj, command, mm_to_m, settings.rot_order)
+                set_empty_pose(obj, command, mm_to_m, settings.rot_order, robot_base)
                 keyframe_pose(obj, frame)
                 last_pose = command
                 frame += settings.frame_step
@@ -244,6 +277,7 @@ class VIEW3D_PT_krl_importer(bpy.types.Panel):
 
         layout.prop(settings, "filepath")
         layout.prop(settings, "target_empty")
+        layout.prop(settings, "robot_base")
 
         column = layout.column(align=True)
         column.prop(settings, "mm_to_m")

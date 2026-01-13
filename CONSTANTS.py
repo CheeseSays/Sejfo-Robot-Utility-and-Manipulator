@@ -32,6 +32,6 @@ CIRC_RE = re.compile(
 
 # Captures WAIT SEC commands: WAIT SEC 1.0
 WAIT_SEC_RE = re.compile(
-    r"^\s*WAIT\s+SEC\s+(?P<seconds>[-+]?\d+(?:\.\d+)?)",
+    r"^\s*WAIT\s+SEC\s+(?P<SEC>[-+]?\d+(?:\.\d+)?)",
     re.IGNORECASE,
 )

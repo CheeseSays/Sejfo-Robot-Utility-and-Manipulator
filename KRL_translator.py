@@ -52,8 +52,8 @@ def parse_program(text: str) -> list:
         # Wait command
         wait_match = WAIT_SEC_RE.match(line_wo_comments)
         if wait_match:
-            seconds = float(wait_match.group("seconds"))
-            commands.append({"type": "WAIT", "seconds": seconds})
+            seconds = float(wait_match.group("SEC"))
+            commands.append({"type": "WAIT", "SEC": seconds})
             continue
 
         # Circular motion
@@ -228,7 +228,7 @@ class ANIM_OT_import_krl(Operator):
 
         if settings.create_action:
             obj.animation_data_create()
-            action_name = bpy.path.basename(settings.filepath).replace('.src', '').replace('.krl', '')
+            action_name = bpy.path.basename(settings.filepath).replace('.src', '').replace('.krl', '').replace('.txt', '')
             obj.animation_data.action = bpy.data.actions.new(name=action_name)
 
         mm_to_m = settings.mm_to_m * settings.global_scale
@@ -242,14 +242,20 @@ class ANIM_OT_import_krl(Operator):
         for command in commands:
             if isinstance(command, dict) and command.get("type") == "WAIT":
                 pause_count += 1
-                seconds = command["seconds"]
-                fps = context.scene.render.fps
+                seconds = command["SEC"]
+                fps = context.scene.render.fps / context.scene.render.fps_base
                 pause_frames = int(seconds * fps)
+                print(f"WAIT: {seconds}s at {fps:.2f}fps = {pause_frames} frames (fps={context.scene.render.fps}, fps_base={context.scene.render.fps_base})")
 
                 if last_pose and pause_frames > 0:
+                    # Back up to the previous pose's frame (WAIT starts where last pose ended)
+                    frame -= settings.frame_step
+                    # Add the pause duration from there
                     frame += pause_frames
                     set_empty_pose(obj, last_pose, mm_to_m, settings.rot_order, robot_base)
                     keyframe_pose(obj, frame)
+                    # Move to next frame for the next command
+                    frame += settings.frame_step
             else:
                 pose_count += 1
                 set_empty_pose(obj, command, mm_to_m, settings.rot_order, robot_base)

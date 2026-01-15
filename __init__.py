@@ -79,6 +79,7 @@ krl_classes = (
 
 fk_classes = (
     FKImporterSettings,
+    ANIM_OT_calculate_dh,
     ANIM_OT_import_fk,
     VIEW3D_PT_fk_importer,
 )

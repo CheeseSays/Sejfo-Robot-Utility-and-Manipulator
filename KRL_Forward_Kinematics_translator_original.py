@@ -1,15 +1,20 @@
 # Interprets KRL a1 a2 a3 a4 a5 a6 commands and converts them to forward kinematics calculations
 # using Denavit-Hartenberg parameters for a 6-DOF robotic arm.
 # The output is the end-effector position and orientation in Cartesian coordinates, as well as joint angles.
-# The animation will be applied to an ARMATURE with bones representing the robot joints:
-# Robot_Armature (armature object)
-#  └── Bone hierarchy:
-#       Joint_1 (bone) -> rotates for A1
-#       └── Joint_2 (bone) -> rotates for A2
-#            └── Joint_3 (bone) -> rotates for A3
-#                 └── Joint_4 (bone) -> rotates for A4
-#                      └── Joint_5 (bone) -> rotates for A5
-#                           └── Joint_6 (bone) -> rotates for A6
+# The animation will be applied to a 3D model hierarchy that looks like this:
+# base_link
+#  ├── link_1_joint
+#  │    └── link_1
+#  │         └── link_2_joint
+#  │              └── link_2
+#  │                   └── link_3_joint
+#  │                        └── link_3
+#  │                             └── link_4_joint
+#  │                                  └── link_4
+#  │                                       └── link_5_joint
+#  │                                            └── link_5
+#  │                                                 └── link_6_joint
+#  │                                                      └── link_6
 
 import bpy
 import re
@@ -90,8 +95,8 @@ def parse_fk_program(text: str) -> list:
         # Direct joint angle specification in PTP command
         if re.search(r"\bPTP\b", line_wo_comments, re.IGNORECASE):
             angles = parse_joint_angles(line_wo_comments)
-            # Accept all PTP commands, including those with all zeros (e.g., home position)
-            commands.append(angles)
+            if any(v != 0.0 for v in angles.values()):
+                commands.append(angles)
     
     return commands
 
@@ -263,12 +268,12 @@ def matrix_to_blender_transform(matrix):
     
     return location, rotation_matrix
 
-def calculate_dh_parameters_from_bones(armature_obj, bone_names, joint_axes):
-    """Calculate DH parameters from armature bones.
+def calculate_dh_parameters_from_joints(base_link, joints, joint_axes):
+    """Calculate DH parameters from the actual joint setup in the scene.
     
     Args:
-        armature_obj: The armature object
-        bone_names: List of 6 bone names
+        base_link: The base link object
+        joints: List of 6 joint objects
         joint_axes: List of rotation axes for each joint
     
     Returns:
@@ -276,29 +281,23 @@ def calculate_dh_parameters_from_bones(armature_obj, bone_names, joint_axes):
     """
     import mathutils
     
-    if not armature_obj or armature_obj.type != 'ARMATURE':
-        return standard_6dof_dh_params()
-    
     dh_params = []
-    armature = armature_obj.data
     
-    # Start from armature origin
-    prev_pos = armature_obj.matrix_world.translation
+    # Start from base_link position
+    prev_pos = base_link.matrix_world.translation if base_link else mathutils.Vector((0, 0, 0))
     prev_z = mathutils.Vector((0, 0, 1))  # Initial Z axis
     
-    for i, (bone_name, axis) in enumerate(zip(bone_names, joint_axes)):
-        if not bone_name or bone_name not in armature.bones:
-            # Use default parameters if bone is not set
+    for i, (joint, axis) in enumerate(zip(joints, joint_axes)):
+        if not joint:
+            # Use default parameters if joint is not set
             dh_params.append((0.0, 0.0, 0.0))
             continue
         
-        bone = armature.bones[bone_name]
-        
-        # Get bone head position in world space
-        bone_head_world = armature_obj.matrix_world @ bone.head_local
+        # Get joint position in world space
+        joint_pos = joint.matrix_world.translation
         
         # Calculate link offset (d) - distance along previous Z axis
-        offset_vec = bone_head_world - prev_pos
+        offset_vec = joint_pos - prev_pos
         d = offset_vec.dot(prev_z)
         
         # Calculate link length (a) - distance in XY plane perpendicular to Z
@@ -307,14 +306,14 @@ def calculate_dh_parameters_from_bones(armature_obj, bone_names, joint_axes):
         a = xy_component.length
         
         # Calculate link twist (alpha) - angle between Z axes
-        # Get bone's local Z axis in world space based on rotation axis setting
-        bone_matrix = (armature_obj.matrix_world @ bone.matrix_local).to_3x3()
+        # Get the joint's Z axis based on rotation axis setting
+        joint_matrix = joint.matrix_world.to_3x3()
         if axis == 'X':
-            current_z = bone_matrix @ mathutils.Vector((1, 0, 0))
+            current_z = joint_matrix @ mathutils.Vector((1, 0, 0))
         elif axis == 'Y':
-            current_z = bone_matrix @ mathutils.Vector((0, 1, 0))
+            current_z = joint_matrix @ mathutils.Vector((0, 1, 0))
         else:  # Z
-            current_z = bone_matrix @ mathutils.Vector((0, 0, 1))
+            current_z = joint_matrix @ mathutils.Vector((0, 0, 1))
         
         # Alpha is the angle between prev_z and current_z
         cos_alpha = prev_z.dot(current_z)
@@ -323,8 +322,8 @@ def calculate_dh_parameters_from_bones(armature_obj, bone_names, joint_axes):
         
         dh_params.append((d, a, alpha))
         
-        # Update for next iteration - use bone tail for next position
-        prev_pos = armature_obj.matrix_world @ bone.tail_local
+        # Update for next iteration
+        prev_pos = joint_pos
         prev_z = current_z
     
     return dh_params
@@ -359,37 +358,33 @@ def apply_fk_to_joint(joint_obj, transformation_matrix, base_link=None):
     # Apply to joint object
     joint_obj.matrix_world = world_matrix
 
-def set_bone_rotation(pose_bone, angle_degrees, axis='Z', invert=False):
-    """Set rotation on a pose bone around the specified axis.
+def set_joint_rotation(joint_obj, angle_degrees, axis='Z'):
+    """Set rotation on a joint object around the specified axis.
     
     Args:
-        pose_bone: The pose bone to rotate
+        joint_obj: The joint object to rotate
         angle_degrees: Rotation angle in degrees
         axis: Rotation axis ('X', 'Y', or 'Z')
-        invert: If True, negate the rotation angle
     """
-    if not pose_bone:
-        return
-    
-    # Apply inversion if needed
-    if invert:
-        angle_degrees = -angle_degrees
-    
-    angle_rad = math.radians(angle_degrees)
-    pose_bone.rotation_mode = 'XYZ'
-    
-    # Set rotation based on specified axis (in local space)
-    if axis == 'X':
-        pose_bone.rotation_euler[0] = angle_rad
-    elif axis == 'Y':
-        pose_bone.rotation_euler[1] = angle_rad
-    else:  # Default to Z
-        pose_bone.rotation_euler[2] = angle_rad
+    if joint_obj and joint_obj.type == 'EMPTY':
+        angle_rad = math.radians(angle_degrees)
+        joint_obj.rotation_mode = 'XYZ'
+        current_rotation = joint_obj.rotation_euler.copy()
+        
+        # Set rotation based on specified axis
+        if axis == 'X':
+            current_rotation.x = angle_rad
+        elif axis == 'Y':
+            current_rotation.y = angle_rad
+        else:  # Default to Z
+            current_rotation.z = angle_rad
+        
+        joint_obj.rotation_euler = current_rotation
 
-def keyframe_bone(pose_bone, frame: int):
-    """Insert keyframe for bone rotation."""
-    if pose_bone:
-        pose_bone.keyframe_insert(data_path="rotation_euler", frame=frame)
+def keyframe_joint(joint_obj, frame: int):
+    """Insert keyframe for joint rotation."""
+    if joint_obj:
+        joint_obj.keyframe_insert(data_path="rotation_euler", frame=frame)
 
 class FKImporterSettings(PropertyGroup):
     filepath: StringProperty(
@@ -399,46 +394,46 @@ class FKImporterSettings(PropertyGroup):
         subtype='FILE_PATH'
     ) # type: ignore
     
-    armature: PointerProperty(
-        name="Robot Armature",
+    base_link: PointerProperty(
+        name="Base Link",
         type=bpy.types.Object,
-        description="Armature object containing the robot bones",
+        description="Root object of the robot hierarchy (base_link)",
     ) # type: ignore
     
-    bone_1: StringProperty(
-        name="Joint 1 Bone",
-        description="Name of bone for Joint 1 (A1)",
-        default="Joint_1"
+    joint_1: PointerProperty(
+        name="Joint 1",
+        type=bpy.types.Object,
+        description="Link 1 joint object (rotates for A1)",
     ) # type: ignore
     
-    bone_2: StringProperty(
-        name="Joint 2 Bone",
-        description="Name of bone for Joint 2 (A2)",
-        default="Joint_2"
+    joint_2: PointerProperty(
+        name="Joint 2",
+        type=bpy.types.Object,
+        description="Link 2 joint object (rotates for A2)",
     ) # type: ignore
     
-    bone_3: StringProperty(
-        name="Joint 3 Bone",
-        description="Name of bone for Joint 3 (A3)",
-        default="Joint_3"
+    joint_3: PointerProperty(
+        name="Joint 3",
+        type=bpy.types.Object,
+        description="Link 3 joint object (rotates for A3)",
     ) # type: ignore
     
-    bone_4: StringProperty(
-        name="Joint 4 Bone",
-        description="Name of bone for Joint 4 (A4)",
-        default="Joint_4"
+    joint_4: PointerProperty(
+        name="Joint 4",
+        type=bpy.types.Object,
+        description="Link 4 joint object (rotates for A4)",
     ) # type: ignore
     
-    bone_5: StringProperty(
-        name="Joint 5 Bone",
-        description="Name of bone for Joint 5 (A5)",
-        default="Joint_5"
+    joint_5: PointerProperty(
+        name="Joint 5",
+        type=bpy.types.Object,
+        description="Link 5 joint object (rotates for A5)",
     ) # type: ignore
     
-    bone_6: StringProperty(
-        name="Joint 6 Bone",
-        description="Name of bone for Joint 6 (A6)",
-        default="Joint_6"
+    joint_6: PointerProperty(
+        name="Joint 6",
+        type=bpy.types.Object,
+        description="Link 6 joint object (rotates for A6)",
     ) # type: ignore
     
     joint_1_axis: EnumProperty(
@@ -493,42 +488,6 @@ class FKImporterSettings(PropertyGroup):
                ('Z', 'Z', 'Rotate around Z axis')],
         default='Z',
         description="Rotation axis for Joint 6"
-    ) # type: ignore
-    
-    invert_joint_1: BoolProperty(
-        name="Invert J1",
-        default=False,
-        description="Invert rotation direction for Joint 1"
-    ) # type: ignore
-    
-    invert_joint_2: BoolProperty(
-        name="Invert J2",
-        default=False,
-        description="Invert rotation direction for Joint 2"
-    ) # type: ignore
-    
-    invert_joint_3: BoolProperty(
-        name="Invert J3",
-        default=False,
-        description="Invert rotation direction for Joint 3"
-    ) # type: ignore
-    
-    invert_joint_4: BoolProperty(
-        name="Invert J4",
-        default=False,
-        description="Invert rotation direction for Joint 4"
-    ) # type: ignore
-    
-    invert_joint_5: BoolProperty(
-        name="Invert J5",
-        default=False,
-        description="Invert rotation direction for Joint 5"
-    ) # type: ignore
-    
-    invert_joint_6: BoolProperty(
-        name="Invert J6",
-        default=False,
-        description="Invert rotation direction for Joint 6"
     ) # type: ignore
     
     start_frame: IntProperty(
@@ -597,28 +556,20 @@ class FKImporterSettings(PropertyGroup):
 class ANIM_OT_calculate_dh(Operator):
     bl_idname = "anim.calculate_dh"
     bl_label = "Calculate DH Parameters"
-    bl_description = "Calculate Denavit-Hartenberg parameters from the armature bones"
+    bl_description = "Calculate Denavit-Hartenberg parameters from the current joint setup"
     bl_options = {'REGISTER', 'UNDO'}
     
     def execute(self, context):
         settings = context.scene.fk_importer_settings
         
-        if not settings.armature:
-            self.report({'ERROR'}, "No armature selected")
-            return {'CANCELLED'}
-        
-        if settings.armature.type != 'ARMATURE':
-            self.report({'ERROR'}, "Selected object is not an armature")
-            return {'CANCELLED'}
-        
-        # Collect bone names and axes
-        bone_names = [
-            settings.bone_1,
-            settings.bone_2,
-            settings.bone_3,
-            settings.bone_4,
-            settings.bone_5,
-            settings.bone_6,
+        # Collect joint objects and axes
+        joints = [
+            settings.joint_1,
+            settings.joint_2,
+            settings.joint_3,
+            settings.joint_4,
+            settings.joint_5,
+            settings.joint_6,
         ]
         
         joint_axes = [
@@ -630,18 +581,17 @@ class ANIM_OT_calculate_dh(Operator):
             settings.joint_6_axis,
         ]
         
-        # Check if all bones exist
-        armature = settings.armature.data
-        missing_bones = []
-        for i, bone_name in enumerate(bone_names, 1):
-            if not bone_name or bone_name not in armature.bones:
-                missing_bones.append(f"Joint {i} ({bone_name})")
+        # Check if all joints are set
+        missing_joints = []
+        for i, joint in enumerate(joints, 1):
+            if not joint:
+                missing_joints.append(f"Joint {i}")
         
-        if missing_bones:
-            self.report({'WARNING'}, f"Some bones not found: {', '.join(missing_bones)}. Using defaults for missing bones.")
+        if missing_joints:
+            self.report({'WARNING'}, f"Some joints not set: {', '.join(missing_joints)}. Using defaults for missing joints.")
         
         # Calculate DH parameters
-        dh_params = calculate_dh_parameters_from_bones(settings.armature, bone_names, joint_axes)
+        dh_params = calculate_dh_parameters_from_joints(settings.base_link, joints, joint_axes)
         
         # Store them in settings
         for i, (d, a, alpha) in enumerate(dh_params, 1):
@@ -651,12 +601,12 @@ class ANIM_OT_calculate_dh(Operator):
         
         settings.dh_params_calculated = True
         
-        # Display parameters
+        # Store them in the scene for display (we'll store as a formatted string)
         params_str = "DH Parameters (d, a, alpha):\n"
         for i, (d, a, alpha) in enumerate(dh_params, 1):
             params_str += f"Joint {i}: d={d:.4f}m, a={a:.4f}m, α={math.degrees(alpha):.2f}°\n"
         
-        self.report({'INFO'}, f"DH parameters calculated from armature bones")
+        self.report({'INFO'}, f"DH parameters calculated from scene geometry")
         print(params_str)
         
         return {'FINISHED'}
@@ -664,7 +614,7 @@ class ANIM_OT_calculate_dh(Operator):
 class ANIM_OT_import_fk(Operator):
     bl_idname = "anim.import_fk"
     bl_label = "Import FK Program"
-    bl_description = "Import a KRL program with joint angles and animate robot armature using forward kinematics"
+    bl_description = "Import a KRL program with joint angles and animate robot using forward kinematics"
     bl_options = {'REGISTER', 'UNDO'}
     
     def execute(self, context):
@@ -674,22 +624,14 @@ class ANIM_OT_import_fk(Operator):
             self.report({'ERROR'}, "No file path specified")
             return {'CANCELLED'}
         
-        if not settings.armature:
-            self.report({'ERROR'}, "No armature selected")
-            return {'CANCELLED'}
-        
-        if settings.armature.type != 'ARMATURE':
-            self.report({'ERROR'}, "Selected object is not an armature")
-            return {'CANCELLED'}
-        
-        # Collect bone names and their rotation axes
-        bone_names = [
-            settings.bone_1,
-            settings.bone_2,
-            settings.bone_3,
-            settings.bone_4,
-            settings.bone_5,
-            settings.bone_6,
+        # Collect joint objects and their rotation axes
+        joints = [
+            settings.joint_1,
+            settings.joint_2,
+            settings.joint_3,
+            settings.joint_4,
+            settings.joint_5,
+            settings.joint_6,
         ]
         
         joint_axes = [
@@ -701,25 +643,14 @@ class ANIM_OT_import_fk(Operator):
             settings.joint_6_axis,
         ]
         
-        invert_flags = [
-            settings.invert_joint_1,
-            settings.invert_joint_2,
-            settings.invert_joint_3,
-            settings.invert_joint_4,
-            settings.invert_joint_5,
-            settings.invert_joint_6,
-        ]
+        # Verify all joints are set
+        missing_joints = []
+        for i, joint in enumerate(joints, 1):
+            if not joint:
+                missing_joints.append(f"Joint {i}")
         
-        # Verify all bones exist in armature
-        armature = settings.armature.data
-        pose_bones = settings.armature.pose.bones
-        missing_bones = []
-        for i, bone_name in enumerate(bone_names, 1):
-            if not bone_name or bone_name not in armature.bones:
-                missing_bones.append(f"Joint {i} ({bone_name})")
-        
-        if missing_bones:
-            self.report({'ERROR'}, f"Missing bones in armature: {', '.join(missing_bones)}")
+        if missing_joints:
+            self.report({'ERROR'}, f"Missing joint assignments: {', '.join(missing_joints)}")
             return {'CANCELLED'}
         
         # Read program file
@@ -736,8 +667,8 @@ class ANIM_OT_import_fk(Operator):
             self.report({'ERROR'}, "No valid joint angle commands found in the program")
             return {'CANCELLED'}
         
-        # Calculate DH parameters from the armature
-        dh_params = calculate_dh_parameters_from_bones(settings.armature, bone_names, joint_axes)
+        # Calculate DH parameters from the scene
+        dh_params = calculate_dh_parameters_from_joints(settings.base_link, joints, joint_axes)
         
         # Store them in settings
         for i, (d, a, alpha) in enumerate(dh_params, 1):
@@ -762,13 +693,15 @@ class ANIM_OT_import_fk(Operator):
                 action_name = bpy.path.basename(settings.filepath).replace('.src', '').replace('.krl', '').replace('.txt', '')
                 tcp_obj.animation_data.action = bpy.data.actions.new(name=f"{action_name}_TCP")
         
-        # Create action for armature if requested
+        # Create actions if requested
         if settings.create_action:
-            settings.armature.animation_data_create()
             action_name = bpy.path.basename(settings.filepath).replace('.src', '').replace('.krl', '').replace('.txt', '')
-            settings.armature.animation_data.action = bpy.data.actions.new(name=f"{action_name}_Armature")
+            for i, joint in enumerate(joints, 1):
+                if joint:
+                    joint.animation_data_create()
+                    joint.animation_data.action = bpy.data.actions.new(name=f"{action_name}_J{i}")
         
-        # Animate bones
+        # Animate joints
         frame = settings.start_frame
         
         for command in commands:
@@ -782,34 +715,38 @@ class ANIM_OT_import_fk(Operator):
                 command.get('A6', 0.0),
             ]
             
-            # Apply rotations directly to pose bones
-            for i, (bone_name, angle, axis, invert) in enumerate(zip(bone_names, angles, joint_axes, invert_flags)):
-                if bone_name in pose_bones:
-                    pose_bone = pose_bones[bone_name]
-                    set_bone_rotation(pose_bone, angle, axis, invert)
-                    keyframe_bone(pose_bone, frame)
+            # Convert angles to radians for FK calculation
+            angles_rad = [math.radians(a) for a in angles]
             
-            # Calculate and animate TCP position using forward kinematics if requested
-            if tcp_obj and settings.animate_tcp:
-                # Convert angles to radians for FK calculation
-                angles_rad = [math.radians(a) for a in angles]
-                transformations = forward_kinematics(angles_rad, dh_params, joint_axes)
+            # Calculate forward kinematics transformations for all joints with rotation axes
+            transformations = forward_kinematics(angles_rad, dh_params, joint_axes)
+            
+            # Apply FK transformations to each joint
+            for i, (joint_obj, transform) in enumerate(zip(joints, transformations)):
+                if joint_obj:
+                    apply_fk_to_joint(joint_obj, transform, settings.base_link)
+                    # Keyframe position and rotation
+                    joint_obj.keyframe_insert(data_path="location", frame=frame)
+                    joint_obj.keyframe_insert(data_path="rotation_euler", frame=frame)
+            
+            # Calculate and animate TCP position using forward kinematics
+            if tcp_obj and settings.animate_tcp and transformations:
+                final_transform = transformations[-1]
                 
-                if transformations:
-                    final_transform = transformations[-1]
-                    # Apply FK transformation to TCP
-                    apply_fk_to_joint(tcp_obj, final_transform, settings.armature)
-                    # Keyframe TCP
-                    tcp_obj.keyframe_insert(data_path="location", frame=frame)
-                    tcp_obj.keyframe_insert(data_path="rotation_euler", frame=frame)
+                # Apply FK transformation to TCP
+                apply_fk_to_joint(tcp_obj, final_transform, settings.base_link)
+                
+                # Keyframe TCP
+                tcp_obj.keyframe_insert(data_path="location", frame=frame)
+                tcp_obj.keyframe_insert(data_path="rotation_euler", frame=frame)
             
             frame += settings.frame_step
         
-        self.report({'INFO'}, f"Imported {len(commands)} joint configurations into armature")
+        self.report({'INFO'}, f"Imported {len(commands)} joint configurations into robot")
         return {'FINISHED'}
 
 class VIEW3D_PT_fk_importer(bpy.types.Panel):
-    bl_label = "FK Importer (Armature)"
+    bl_label = "FK Importer"
     bl_idname = "VIEW3D_PT_fk_importer"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -822,49 +759,38 @@ class VIEW3D_PT_fk_importer(bpy.types.Panel):
         layout.prop(settings, "filepath")
         
         box = layout.box()
-        box.label(text="Robot Armature:", icon='ARMATURE_DATA')
-        box.prop(settings, "armature")
+        box.label(text="Robot Joints:")
+        box.prop(settings, "base_link")
         
-        if settings.armature and settings.armature.type == 'ARMATURE':
-            box.label(text="Bone Names, Axes & Invert:")
-            
-            # Joint 1
-            row = box.row()
-            row.prop(settings, "bone_1", text="J1")
-            row.prop(settings, "joint_1_axis", text="")
-            row.prop(settings, "invert_joint_1", text="", icon='ARROW_LEFTRIGHT')
-            
-            # Joint 2
-            row = box.row()
-            row.prop(settings, "bone_2", text="J2")
-            row.prop(settings, "joint_2_axis", text="")
-            row.prop(settings, "invert_joint_2", text="", icon='ARROW_LEFTRIGHT')
-            
-            # Joint 3
-            row = box.row()
-            row.prop(settings, "bone_3", text="J3")
-            row.prop(settings, "joint_3_axis", text="")
-            row.prop(settings, "invert_joint_3", text="", icon='ARROW_LEFTRIGHT')
-            
-            # Joint 4
-            row = box.row()
-            row.prop(settings, "bone_4", text="J4")
-            row.prop(settings, "joint_4_axis", text="")
-            row.prop(settings, "invert_joint_4", text="", icon='ARROW_LEFTRIGHT')
-            
-            # Joint 5
-            row = box.row()
-            row.prop(settings, "bone_5", text="J5")
-            row.prop(settings, "joint_5_axis", text="")
-            row.prop(settings, "invert_joint_5", text="", icon='ARROW_LEFTRIGHT')
-            
-            # Joint 6
-            row = box.row()
-            row.prop(settings, "bone_6", text="J6")
-            row.prop(settings, "joint_6_axis", text="")
-            row.prop(settings, "invert_joint_6", text="", icon='ARROW_LEFTRIGHT')
-        elif settings.armature:
-            box.label(text="⚠ Selected object is not an armature", icon='ERROR')
+        # Joint 1
+        row = box.row()
+        row.prop(settings, "joint_1")
+        row.prop(settings, "joint_1_axis", text="")
+        
+        # Joint 2
+        row = box.row()
+        row.prop(settings, "joint_2")
+        row.prop(settings, "joint_2_axis", text="")
+        
+        # Joint 3
+        row = box.row()
+        row.prop(settings, "joint_3")
+        row.prop(settings, "joint_3_axis", text="")
+        
+        # Joint 4
+        row = box.row()
+        row.prop(settings, "joint_4")
+        row.prop(settings, "joint_4_axis", text="")
+        
+        # Joint 5
+        row = box.row()
+        row.prop(settings, "joint_5")
+        row.prop(settings, "joint_5_axis", text="")
+        
+        # Joint 6
+        row = box.row()
+        row.prop(settings, "joint_6")
+        row.prop(settings, "joint_6_axis", text="")
         
         layout.separator()
         

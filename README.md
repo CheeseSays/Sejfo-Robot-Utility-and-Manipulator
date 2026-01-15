@@ -12,6 +12,7 @@
 
 ### **Usage**
 In its current state it has support for KRL XYZABC linear and cirular statements, as well as WAIT SEC statements.
+The importer for the a1a2a3a4a5a6 statement format is a seperate method for now.
 
 You'll need a robot model with an IK ready armature. 
 

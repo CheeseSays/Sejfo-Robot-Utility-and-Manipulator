@@ -1,5 +1,6 @@
 # Sejfo Robot Utility and Manipulator - SeRUM
 *This project is currently in early stages of development*
+
 *For full transparency, some parts of this project, mainly the forward kinematics parts, have been writen with the help of AI*
 
 ### **Requirements:** 

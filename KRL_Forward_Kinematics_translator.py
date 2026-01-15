@@ -45,6 +45,24 @@ PTP_JOINT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Matches velocity commands: BAS (#VEL_PTP,100)
+VEL_PTP_RE = re.compile(
+    r"BAS\s*\(\s*#VEL_PTP\s*,\s*(?P<velocity>\d+(?:\.\d+)?)\s*\)",
+    re.IGNORECASE,
+)
+
+# Matches acceleration commands: BAS (#ACC_PTP,20)
+ACC_PTP_RE = re.compile(
+    r"BAS\s*\(\s*#ACC_PTP\s*,\s*(?P<acceleration>\d+(?:\.\d+)?)\s*\)",
+    re.IGNORECASE,
+)
+
+# Matches Cartesian path velocity: $VEL.CP=0.2
+VEL_CP_RE = re.compile(
+    r"\$VEL\.CP\s*=\s*(?P<velocity>\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+
 def parse_joint_angles(text: str) -> dict:
     """Parse joint angles from a KRL command string."""
     angles = {}
@@ -59,15 +77,36 @@ def parse_joint_angles(text: str) -> dict:
     
     return angles
 
-def parse_fk_program(text: str) -> list:
-    """Parse a KRL program for joint angle commands."""
+def parse_fk_program(text: str) -> tuple:
+    """Parse a KRL program for joint angle commands and motion parameters.
+    
+    Returns:
+        tuple: (commands, velocity, acceleration) where:
+            - commands: list of joint angle dictionaries
+            - velocity: PTP velocity percentage (default 100)
+            - acceleration: PTP acceleration percentage (default 100)
+    """
     named_configs = {}
     commands = []
+    velocity = 100.0  # Default PTP velocity percentage
+    acceleration = 100.0  # Default PTP acceleration percentage
     
     lines = text.splitlines()
     for line in lines:
         line_wo_comments = line.split(';')[0].strip()
         if not line_wo_comments:
+            continue
+        
+        # Check for velocity setting
+        vel_match = VEL_PTP_RE.search(line_wo_comments)
+        if vel_match:
+            velocity = float(vel_match.group("velocity"))
+            continue
+        
+        # Check for acceleration setting
+        acc_match = ACC_PTP_RE.search(line_wo_comments)
+        if acc_match:
+            acceleration = float(acc_match.group("acceleration"))
             continue
         
         # Named joint configuration
@@ -93,7 +132,7 @@ def parse_fk_program(text: str) -> list:
             # Accept all PTP commands, including those with all zeros (e.g., home position)
             commands.append(angles)
     
-    return commands
+    return commands, velocity, acceleration
 
 def dh_transform(theta, d, a, alpha):
     """
@@ -391,6 +430,65 @@ def keyframe_bone(pose_bone, frame: int):
     if pose_bone:
         pose_bone.keyframe_insert(data_path="rotation_euler", frame=frame)
 
+def calculate_dynamic_frame_step(prev_angles, curr_angles, velocity, acceleration, base_fps, velocity_scale):
+    """Calculate dynamic frame step based on angular displacement, velocity, and acceleration.
+    
+    Args:
+        prev_angles: Previous joint angles in degrees [A1, A2, A3, A4, A5, A6]
+        curr_angles: Current joint angles in degrees [A1, A2, A3, A4, A5, A6]
+        velocity: PTP velocity percentage (0-100)
+        acceleration: PTP acceleration percentage (0-100)
+        base_fps: Base frames per second for the animation
+        velocity_scale: Scale factor for velocity calculation
+    
+    Returns:
+        Number of frames for this movement segment
+    """
+    # Calculate the maximum angular displacement across all joints
+    max_displacement = 0.0
+    for prev, curr in zip(prev_angles, curr_angles):
+        displacement = abs(curr - prev)
+        max_displacement = max(max_displacement, displacement)
+    
+    # If no movement, return minimum frame step
+    if max_displacement < 0.001:
+        return 1
+    
+    # Base time calculation (assuming max velocity is around 150 deg/s for industrial robots)
+    # Scale velocity: 100% = 1.0, 50% = 0.5
+    velocity_factor = velocity / 100.0
+    
+    # Estimate time based on displacement and velocity
+    # Using a reasonable max angular velocity for industrial robots
+    max_angular_velocity = 150.0  # degrees per second at 100% velocity
+    actual_velocity = max_angular_velocity * velocity_factor
+    
+    # Calculate movement time in seconds
+    # With acceleration, we need to account for ramp-up/ramp-down
+    # Simplified trapezoidal velocity profile
+    accel_factor = acceleration / 100.0
+    
+    # Assuming acceleration time is ~30% of total movement time at 100%
+    # Lower acceleration means longer ramp times
+    accel_time_ratio = 0.3 / accel_factor
+    
+    # Time = displacement / velocity, adjusted for acceleration profile
+    if max_displacement < (actual_velocity * accel_time_ratio):
+        # Short movement - dominated by acceleration
+        movement_time = 2 * math.sqrt(max_displacement / (actual_velocity * accel_factor))
+    else:
+        # Long movement - trapezoidal profile
+        const_vel_displacement = max_displacement - (actual_velocity * accel_time_ratio)
+        movement_time = accel_time_ratio + (const_vel_displacement / actual_velocity)
+    
+    # Apply velocity scale (user adjustment)
+    movement_time *= velocity_scale
+    
+    # Convert to frames
+    frames = max(1, int(movement_time * base_fps))
+    
+    return frames
+
 class FKImporterSettings(PropertyGroup):
     filepath: StringProperty(
         name="File Path",
@@ -539,8 +637,34 @@ class FKImporterSettings(PropertyGroup):
     
     frame_step: IntProperty(
         name="Frame Step",
-        description="Number of frames between keyframes",
+        description="Number of frames between keyframes (Fixed mode only)",
         default=25,
+    ) # type: ignore
+    
+    frame_step_mode: EnumProperty(
+        name="Frame Step Mode",
+        items=[
+            ('FIXED', 'Fixed', 'Use fixed frame step value for all movements'),
+            ('DYNAMIC', 'Dynamic', 'Calculate frame steps based on velocity, acceleration, and angular displacement'),
+        ],
+        default='FIXED',
+        description="Method for calculating frames between keyframes"
+    ) # type: ignore
+    
+    base_fps: FloatProperty(
+        name="Base FPS",
+        description="Base frames per second for dynamic frame calculation (typically 24, 30, or 60)",
+        default=30.0,
+        min=1.0,
+        max=120.0,
+    ) # type: ignore
+    
+    velocity_scale: FloatProperty(
+        name="Velocity Scale",
+        description="Scale factor for velocity-based frame calculation (higher = slower motion)",
+        default=1.0,
+        min=0.1,
+        max=10.0,
     ) # type: ignore
     
     create_action: BoolProperty(
@@ -731,10 +855,17 @@ class ANIM_OT_import_fk(Operator):
             return {'CANCELLED'}
         
         # Parse joint angle commands
-        commands = parse_fk_program(program_text)
+        parse_result = parse_fk_program(program_text)
+        commands, velocity, acceleration = parse_result
         if not commands:
             self.report({'ERROR'}, "No valid joint angle commands found in the program")
             return {'CANCELLED'}
+        
+        # Log velocity and acceleration settings
+        print(f"\n=== Motion Parameters ===")
+        print(f"PTP Velocity: {velocity}%")
+        print(f"PTP Acceleration: {acceleration}%")
+        print(f"========================\n")
         
         # Calculate DH parameters from the armature
         dh_params = calculate_dh_parameters_from_bones(settings.armature, bone_names, joint_axes)
@@ -770,8 +901,9 @@ class ANIM_OT_import_fk(Operator):
         
         # Animate bones
         frame = settings.start_frame
+        prev_angles = None
         
-        for command in commands:
+        for cmd_idx, command in enumerate(commands):
             # Extract joint angles
             angles = [
                 command.get('A1', 0.0),
@@ -803,7 +935,29 @@ class ANIM_OT_import_fk(Operator):
                     tcp_obj.keyframe_insert(data_path="location", frame=frame)
                     tcp_obj.keyframe_insert(data_path="rotation_euler", frame=frame)
             
-            frame += settings.frame_step
+            # Calculate frame step for next position
+            if cmd_idx < len(commands) - 1:  # Not the last command
+                if settings.frame_step_mode == 'DYNAMIC':
+                    # Calculate dynamic frame step based on motion
+                    if prev_angles is None:
+                        prev_angles = angles
+                    
+                    frame_delta = calculate_dynamic_frame_step(
+                        angles,  # Current becomes previous for next iteration
+                        [commands[cmd_idx + 1].get(f'A{i}', 0.0) for i in range(1, 7)],  # Peek at next
+                        velocity, 
+                        acceleration, 
+                        settings.base_fps, 
+                        settings.velocity_scale
+                    )
+                    frame += frame_delta
+                    print(f"Command {cmd_idx + 1} -> {cmd_idx + 2}: Dynamic frame step = {frame_delta} (next frame {frame})")
+                else:
+                    # Fixed frame step mode
+                    frame += settings.frame_step
+            
+            # Update previous angles for reference
+            prev_angles = angles
         
         self.report({'INFO'}, f"Imported {len(commands)} joint configurations into armature")
         return {'FINISHED'}
@@ -868,9 +1022,21 @@ class VIEW3D_PT_fk_importer(bpy.types.Panel):
         
         layout.separator()
         
-        column = layout.column(align=True)
+        # Frame stepping configuration
+        box = layout.box()
+        box.label(text="Frame Stepping:", icon='TIME')
+        box.prop(settings, "frame_step_mode", text="Mode")
+        
+        column = box.column(align=True)
         column.prop(settings, "start_frame")
-        column.prop(settings, "frame_step")
+        
+        if settings.frame_step_mode == 'FIXED':
+            column.prop(settings, "frame_step")
+            box.label(text="Fixed frames between keyframes", icon='INFO')
+        else:  # DYNAMIC
+            column.prop(settings, "base_fps")
+            column.prop(settings, "velocity_scale")
+            box.label(text="Frames calculated from velocity/acceleration", icon='INFO')
         
         layout.prop(settings, "create_action")
         
